@@ -18,16 +18,15 @@ depends: []
 #include "can.hpp"
 #include "cycle_value.hpp"
 #include "libxr_def.hpp"
+#include "libxr_time.hpp"
 #include "libxr_type.hpp"
 #include "ramfs.hpp"
 #include "thread.hpp"
 
 class SuperPower : public LibXR::Application {
  public:
-  SuperPower(LibXR::HardwareContainer &hw,
-             LibXR::ApplicationManager &app,
-             const char *can_bus_name,
-             uint32_t task_stack_depth)
+  SuperPower(LibXR::HardwareContainer &hw, LibXR::ApplicationManager &app,
+             const char *can_bus_name, uint32_t task_stack_depth)
       : can_(hw.template FindOrExit<LibXR::CAN>({can_bus_name})) {
     UNUSED(app);
 
@@ -40,7 +39,7 @@ class SuperPower : public LibXR::Application {
     can_->Register(rx_callback, LibXR::CAN::Type::STANDARD,
                    LibXR::CAN::FilterMode::ID_RANGE, 0x51, 0x51);
     thread_.Create(this, ThreadFunction, "SuperPowerThread", task_stack_depth,
-                   LibXR::Thread::Priority::MEDIUM);
+                   LibXR::Thread::Priority::HIGH);
   }
 
   static void ThreadFunction(SuperPower *super_power) {
@@ -48,7 +47,7 @@ class SuperPower : public LibXR::Application {
 
     while (true) {
       super_power->Update();
-      super_power->thread_.SleepUntil(last_time, 2.0f);
+      super_power->thread_.SleepUntil(last_time, 2);
     }
   }
 
@@ -57,13 +56,29 @@ class SuperPower : public LibXR::Application {
     if (recv_.Pop(pack) == LibXR::ErrorCode::OK) {
       this->DecodePowerData(pack);
     }
-    corrected_chassis_power_ = static_cast<float>(chassis_power_ * 0.8179 + 0.4);
+
+    auto now = LibXR::Timebase::GetMilliseconds();
+    if (last_rx_time_ms_ > now) {
+      now = last_rx_time_ms_;
+    }
+    float time_since_last_rx = (now - last_rx_time_ms_).ToSecondf();
+
+    dt_ = time_since_last_rx;
+
+    /*如果0.1s没有收到新的数据 认为超电掉线*/
+    if (time_since_last_rx > 0.1f) {
+      online_ = false;
+      chassis_power_ = 0.0f;
+    } else {
+      online_ = true;
+    }
   }
 
   static void RxCallback(bool in_isr, SuperPower *self,
                          const LibXR::CAN::ClassicPack &pack) {
     UNUSED(in_isr);
     if (pack.id == 0x51) {
+      self->last_rx_time_ms_ = LibXR::Timebase::GetMilliseconds();
       self->PushToQueue(pack);
     }
   }
@@ -74,15 +89,20 @@ class SuperPower : public LibXR::Application {
     memcpy(&chassis_power_, &pack.data[1], sizeof(float));
   }
 
-  float GetChassisPower() { return this->corrected_chassis_power_; }
+  float GetChassisPower() { return this->chassis_power_; }
+
+  bool IsOnline() { return online_; }
 
   void OnMonitor() override {}
 
  private:
   LibXR::Thread thread_;
   float chassis_power_ = 0.0f;
-  float corrected_chassis_power_;
   LibXR::CAN *can_;
+
+  LibXR::MillisecondTimestamp last_rx_time_ms_ = 0.0f;
+  float dt_ = 0.0f;
+  bool online_ = false;
 
   LibXR::LockFreeQueue<LibXR::CAN::ClassicPack> recv_{1};
 };
