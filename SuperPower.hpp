@@ -43,11 +43,10 @@ class SuperPower : public LibXR::Application {
   }
 
   static void ThreadFunction(SuperPower *super_power) {
-    auto last_time = LibXR::Timebase::GetMilliseconds();
 
     while (true) {
       super_power->Update();
-      super_power->thread_.SleepUntil(last_time, 2);
+      super_power->thread_.Sleep(2);
     }
   }
 
