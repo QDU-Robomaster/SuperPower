@@ -25,13 +25,13 @@ depends: []
 
 class SuperPower : public LibXR::Application {
  public:
-  SuperPower(LibXR::HardwareContainer &hw, LibXR::ApplicationManager &app,
-             const char *can_bus_name, uint32_t task_stack_depth)
+  SuperPower(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
+             const char* can_bus_name, uint32_t task_stack_depth)
       : can_(hw.template FindOrExit<LibXR::CAN>({can_bus_name})) {
     UNUSED(app);
 
     auto rx_callback = LibXR::CAN::Callback::Create(
-        [](bool in_isr, SuperPower *self, const LibXR::CAN::ClassicPack &pack) {
+        [](bool in_isr, SuperPower* self, const LibXR::CAN::ClassicPack& pack) {
           RxCallback(in_isr, self, pack);
         },
         this);
@@ -42,8 +42,7 @@ class SuperPower : public LibXR::Application {
                    LibXR::Thread::Priority::HIGH);
   }
 
-  static void ThreadFunction(SuperPower *super_power) {
-
+  static void ThreadFunction(SuperPower* super_power) {
     while (true) {
       super_power->Update();
       super_power->thread_.Sleep(2);
@@ -73,8 +72,8 @@ class SuperPower : public LibXR::Application {
     }
   }
 
-  static void RxCallback(bool in_isr, SuperPower *self,
-                         const LibXR::CAN::ClassicPack &pack) {
+  static void RxCallback(bool in_isr, SuperPower* self,
+                         const LibXR::CAN::ClassicPack& pack) {
     UNUSED(in_isr);
     if (pack.id == 0x51) {
       self->last_rx_time_ms_ = LibXR::Timebase::GetMilliseconds();
@@ -82,9 +81,9 @@ class SuperPower : public LibXR::Application {
     }
   }
 
-  void PushToQueue(const LibXR::CAN::ClassicPack &pack) { recv_.Push(pack); }
+  void PushToQueue(const LibXR::CAN::ClassicPack& pack) { recv_.Push(pack); }
 
-  void DecodePowerData(const LibXR::CAN::ClassicPack &pack) {
+  void DecodePowerData(const LibXR::CAN::ClassicPack& pack) {
     memcpy(&chassis_power_, &pack.data[1], sizeof(float));
   }
 
@@ -97,7 +96,7 @@ class SuperPower : public LibXR::Application {
  private:
   LibXR::Thread thread_;
   float chassis_power_ = 0.0f;
-  LibXR::CAN *can_;
+  LibXR::CAN* can_;
 
   LibXR::MillisecondTimestamp last_rx_time_ms_ = 0.0f;
   float dt_ = 0.0f;
