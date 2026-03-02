@@ -13,6 +13,7 @@ depends: []
 === END MANIFEST === */
 // clang-format on
 #include <algorithm>
+#include <cstring>
 
 #include "app_framework.hpp"
 #include "can.hpp"
@@ -25,6 +26,14 @@ depends: []
 
 class SuperPower : public LibXR::Application {
  public:
+  /* 旧通讯格式 (0x051) 反馈数据结构 */
+  struct __attribute__((packed)) TxData {
+    uint8_t status_code;
+    float chassis_power;
+    uint16_t chassis_power_limit;
+    uint8_t cap_energy;
+  };
+
   SuperPower(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
              const char* can_bus_name, uint32_t task_stack_depth)
       : can_(hw.template FindOrExit<LibXR::CAN>({can_bus_name})) {
@@ -67,6 +76,9 @@ class SuperPower : public LibXR::Application {
     if (time_since_last_rx > 0.1f) {
       online_ = false;
       chassis_power_ = 0.0f;
+      chassis_power_limit_ = 0;
+      cap_energy_ = 0;
+      status_code_ = 0;
     } else {
       online_ = true;
     }
@@ -84,10 +96,21 @@ class SuperPower : public LibXR::Application {
   void PushToQueue(const LibXR::CAN::ClassicPack& pack) { recv_.Push(pack); }
 
   void DecodePowerData(const LibXR::CAN::ClassicPack& pack) {
-    memcpy(&chassis_power_, &pack.data[1], sizeof(float));
+    TxData data;
+    std::memcpy(&data, pack.data, sizeof(TxData));
+    status_code_ = data.status_code;
+    chassis_power_ = data.chassis_power;
+    chassis_power_limit_ = data.chassis_power_limit;
+    cap_energy_ = data.cap_energy;
   }
 
   float GetChassisPower() { return this->chassis_power_; }
+
+  uint16_t GetChassisPowerLimit() { return this->chassis_power_limit_; }
+
+  uint8_t GetCapEnergy() { return this->cap_energy_; }
+
+  uint8_t GetStatusCode() { return this->status_code_; }
 
   bool IsOnline() { return online_; }
 
@@ -96,6 +119,9 @@ class SuperPower : public LibXR::Application {
  private:
   LibXR::Thread thread_;
   float chassis_power_ = 0.0f;
+  uint16_t chassis_power_limit_ = 0;
+  uint8_t cap_energy_ = 0;
+  uint8_t status_code_ = 0;
   LibXR::CAN* can_;
 
   LibXR::MillisecondTimestamp last_rx_time_ms_ = 0.0f;
