@@ -24,9 +24,11 @@ depends: []
 #include "ramfs.hpp"
 #include "thread.hpp"
 
+/*新超电ID 0X52*/
+#define SuperPowerID 0x52
 class SuperPower : public LibXR::Application {
  public:
-  /* 新通讯格式 (0x052) 反馈数据结构 */
+  /* 新通讯格式 (0x52) 反馈数据结构 */
   struct __attribute__((packed)) TxDataNew {
     uint8_t status_code;
     uint16_t chassis_power;
@@ -38,9 +40,9 @@ class SuperPower : public LibXR::Application {
   /* statusCode 位域定义 */
   enum class ErrorLevel : uint8_t {
     NO_ERROR = 0,
-    ERROR_RECOVER_AUTO = 1,
-    ERROR_RECOVER_MANUAL = 2,
-    ERROR_UNRECOVERABLE = 3,
+    ERROR_RECOVER_AUTO = 1,   /* 可自动恢复的错误 */
+    ERROR_RECOVER_MANUAL = 2, /* 需要手动恢复的错误 */
+    ERROR_UNRECOVERABLE = 3,  /* 不可恢复的错误，如过流保护触发 */
   };
 
   SuperPower(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
@@ -55,7 +57,8 @@ class SuperPower : public LibXR::Application {
         this);
 
     can_->Register(rx_callback, LibXR::CAN::Type::STANDARD,
-                   LibXR::CAN::FilterMode::ID_RANGE, 0x52, 0x52);
+                   LibXR::CAN::FilterMode::ID_RANGE, SuperPowerID,
+                   SuperPowerID);
     thread_.Create(this, ThreadFunction, "SuperPowerThread", task_stack_depth,
                    LibXR::Thread::Priority::HIGH);
   }
@@ -97,7 +100,7 @@ class SuperPower : public LibXR::Application {
   static void RxCallback(bool in_isr, SuperPower* self,
                          const LibXR::CAN::ClassicPack& pack) {
     UNUSED(in_isr);
-    if (pack.id == 0x52) {
+    if (pack.id == SuperPowerID) {
       self->last_rx_time_ms_ = LibXR::Timebase::GetMilliseconds();
       self->PushToQueue(pack);
     }
@@ -135,10 +138,14 @@ class SuperPower : public LibXR::Application {
   uint8_t GetStatusCode() { return this->status_code_; }
 
   /* statusCode 位域解析 */
+
+  /*功率级状态 1为启动 0为未启动（触发保护或主控板禁用）*/
   bool IsPowerStageOn() { return (status_code_ >> 7) & 0x01; }
 
+  /* 反馈信息格式 | 1为新通讯格式，0为旧通讯格式（RM2024）*/
   bool IsNewFeedbackFormat() { return (status_code_ >> 6) & 0x01; }
 
+  /*错误等级*/
   ErrorLevel GetErrorLevel() {
     return static_cast<ErrorLevel>(status_code_ & 0x03);
   }
