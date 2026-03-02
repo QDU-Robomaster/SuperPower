@@ -24,6 +24,8 @@ depends: []
 #include "ramfs.hpp"
 #include "thread.hpp"
 
+#define SuperPowerID 0X51
+
 class SuperPower : public LibXR::Application {
  public:
   /* 旧通讯格式 (0x051) 反馈数据结构 */
@@ -46,7 +48,7 @@ class SuperPower : public LibXR::Application {
         this);
 
     can_->Register(rx_callback, LibXR::CAN::Type::STANDARD,
-                   LibXR::CAN::FilterMode::ID_RANGE, 0x51, 0x51);
+                   LibXR::CAN::FilterMode::ID_RANGE, SuperPowerID, SuperPowerID);
     thread_.Create(this, ThreadFunction, "SuperPowerThread", task_stack_depth,
                    LibXR::Thread::Priority::HIGH);
   }
@@ -87,7 +89,7 @@ class SuperPower : public LibXR::Application {
   static void RxCallback(bool in_isr, SuperPower* self,
                          const LibXR::CAN::ClassicPack& pack) {
     UNUSED(in_isr);
-    if (pack.id == 0x51) {
+    if (pack.id == SuperPowerID) {
       self->last_rx_time_ms_ = LibXR::Timebase::GetMilliseconds();
       self->PushToQueue(pack);
     }
