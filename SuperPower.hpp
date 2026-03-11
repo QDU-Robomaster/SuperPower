@@ -6,6 +6,7 @@ module_description: 超级电容电源模块
 constructor_args:
   - can_bus_name: "can1"
   - task_stack_depth: 2048
+  - thread_priority: LibXR::Thread::Priority::MEDIUM
 template_args: []
 required_hardware:
   - can
@@ -25,8 +26,10 @@ depends: []
 
 class SuperPower : public LibXR::Application {
  public:
-  SuperPower(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
-             const char* can_bus_name, uint32_t task_stack_depth)
+  SuperPower(
+      LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
+      const char* can_bus_name, uint32_t task_stack_depth,
+      LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::MEDIUM)
       : can_(hw.template FindOrExit<LibXR::CAN>({can_bus_name})) {
     UNUSED(app);
 
@@ -39,7 +42,7 @@ class SuperPower : public LibXR::Application {
     can_->Register(rx_callback, LibXR::CAN::Type::STANDARD,
                    LibXR::CAN::FilterMode::ID_RANGE, 0x51, 0x51);
     thread_.Create(this, ThreadFunction, "SuperPowerThread", task_stack_depth,
-                   LibXR::Thread::Priority::HIGH);
+                   thread_priority);
   }
 
   static void ThreadFunction(SuperPower* super_power) {
