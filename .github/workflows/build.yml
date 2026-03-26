@@ -59,6 +59,12 @@ jobs:
           repository: QDU-Robomaster/Referee
           path: Modules/Referee
 
+      - name: Checkout CMD module
+        uses: actions/checkout@v4
+        with:
+          repository: QDU-Robomaster/CMD
+          path: Modules/CMD
+
       - name: Setup Python & Install deps
         run: |
           python3 -m pip install --upgrade pip
@@ -84,7 +90,7 @@ jobs:
         run: |
           xrobot_add_mod BlinkLED --instance-id BlinkLED_0
           xrobot_add_mod Referee --instance-id referee
-
+          xrobot_add_mod CMD --instance-id cmd
       - name: Add this repo module
         run: |
           xrobot_add_mod ${{ env.XR_MODULE_NAME }} && cat User/xrobot.yaml
