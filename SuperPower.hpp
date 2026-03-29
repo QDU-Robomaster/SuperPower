@@ -47,16 +47,17 @@ class SuperPower : public LibXR::Application {
 
   /* 发送给超电的命令数据结构 */
   struct __attribute__((packed)) CmdData {
-    uint8_t enable_dcdc : 1;     /* 允许启动 DCDC */
-    uint8_t system_restart : 1;  /* 系统重启 */
+    uint8_t enable_dcdc : 1;    /* 允许启动 DCDC */
+    uint8_t system_restart : 1; /* 系统重启 */
     uint8_t resv0 : 3;
-    uint8_t clear_error : 1;                   /* 清除错误 */
-    uint8_t enable_active_charging_limit : 1;  /* 启用主动充电限制 */
-    uint8_t use_new_feedback_message : 1;      /* 是否使用新的反馈信息格式 */
+    uint8_t clear_error : 1;                  /* 清除错误 */
+    uint8_t enable_active_charging_limit : 1; /* 启用主动充电限制 */
+    uint8_t use_new_feedback_message : 1;     /* 是否使用新的反馈信息格式 */
 
-    uint16_t referee_power_limit;         /* 裁判系统功率限制 W */
-    uint16_t referee_energy_buffer;       /* 裁判系统缓冲能量 J */
-    uint8_t active_charging_limit_ratio;  /* 允许启动 DCDC 的电容能量比例 (0-255) */
+    uint16_t referee_power_limit;   /* 裁判系统功率限制 W */
+    uint16_t referee_energy_buffer; /* 裁判系统缓冲能量 J */
+    uint8_t
+        active_charging_limit_ratio; /* 允许启动 DCDC 的电容能量比例 (0-255) */
     int16_t resv2;
   };
 
@@ -165,7 +166,9 @@ class SuperPower : public LibXR::Application {
 
   float GetChassisPower() { return chassis_power_; }
 
-  uint8_t GetCapEnergy() { return cap_energy_; }
+  float GetCapEnergy() {
+    return static_cast<float>(cap_energy_) / 255.0f;
+  }
 
   uint8_t GetStatusCode() { return status_code_; }
 
