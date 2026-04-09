@@ -80,7 +80,7 @@ class SuperPower : public LibXR::Application {
         referee_(referee) {
     UNUSED(app);
 
-    std::memset(&cmd_data_, 0, sizeof(cmd_data_));
+    LibXR::Memory::FastSet(&cmd_data_, 0, sizeof(cmd_data_));
     cmd_data_.use_new_feedback_message = 1; /* 默认使用新通讯格式 */
     cmd_data_.enable_dcdc = 1;              /* 默认启动DCDC */
 
