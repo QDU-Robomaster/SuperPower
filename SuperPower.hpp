@@ -76,8 +76,7 @@ class SuperPower : public LibXR::Application {
       const char* can_bus_name, uint32_t task_stack_depth,
       LibXR::Thread::Priority thread_priority = LibXR::Thread::Priority::HIGH,
       Referee* referee = nullptr)
-      : can_(hw.template FindOrExit<LibXR::CAN>({can_bus_name})),
-        referee_(referee) {
+      : can_(hw.template FindOrExit<LibXR::CAN>({can_bus_name})) {
     UNUSED(app);
 
     LibXR::Memory::FastSet(&cmd_data_, 0, sizeof(cmd_data_));
@@ -119,15 +118,7 @@ class SuperPower : public LibXR::Application {
         super_power->referee_chassis_pack_ = chassis_pack;
         referee_suber.StartWaiting();
       }
-
       super_power->Update();
-
-      auto now = LibXR::Timebase::GetMilliseconds();
-      if ((now - super_power->last_ui_tx_time_ms_).ToSecondf() >=
-          UI_TX_PERIOD_S) {
-        super_power->DrawCapEnergyUI();
-        super_power->last_ui_tx_time_ms_ = now;
-      }
 
       super_power->thread_.SleepUntil(last_time, 2);
     }
@@ -203,7 +194,6 @@ class SuperPower : public LibXR::Application {
   void OnMonitor() override {}
 
  private:
-
   /**
    * @brief 通过CAN发送命令给超电
    */
@@ -223,7 +213,6 @@ class SuperPower : public LibXR::Application {
   uint8_t status_code_ = 0;
 
   LibXR::CAN* can_;
-  Referee* referee_;
   CmdData cmd_data_{};
   Referee::ChassisPack referee_chassis_pack_{};
 
@@ -231,7 +220,6 @@ class SuperPower : public LibXR::Application {
   LibXR::MillisecondTimestamp last_ui_tx_time_ms_ = 0.0f;
   float dt_ = 0.0f;
   bool online_ = false;
-  bool ui_cap_initialized_ = false;
 
   LibXR::LockFreeQueue<LibXR::CAN::ClassicPack> recv_{1};
 };
