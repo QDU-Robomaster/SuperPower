@@ -5,7 +5,7 @@
 module_description: 超级电容电源模块
 constructor_args:
   - can_bus_name: "can1"
-  - task_stack_depth: 2048
+  - task_stack_depth: 800
   - thread_priority: LibXR::Thread::Priority::HIGH
   - referee: "@nullptr"
 template_args: []
@@ -114,6 +114,8 @@ class SuperPower : public LibXR::Application {
         const auto chassis_pack = referee_suber.GetData();
         super_power->cmd_data_.referee_power_limit =
             chassis_pack.rs.chassis_power_limit;
+        super_power->cmd_data_.referee_energy_buffer =
+            chassis_pack.power_buffer;
         super_power->referee_chassis_pack_ = chassis_pack;
         referee_suber.StartWaiting();
       }
@@ -201,85 +203,6 @@ class SuperPower : public LibXR::Application {
   void OnMonitor() override {}
 
  private:
-    static constexpr uint16_t UI_LAYER_SUPERPOWER = 1;
-    static constexpr uint16_t UI_CHAR_WIDTH = 2;
-    static constexpr float UI_TX_PERIOD_S = 0.3f;
-
-    static uint16_t GetClientID(uint16_t robot_id) {
-      if (robot_id > 100) {
-        return static_cast<uint16_t>(robot_id - 101 + 0x0165);
-      }
-      return static_cast<uint16_t>(robot_id + 0x0100);
-    }
-
-    static void SetFigureName(uint8_t (&dst)[3], const char* name) {
-      dst[0] = ' ';
-      dst[1] = ' ';
-      dst[2] = ' ';
-      if (name == nullptr) {
-        return;
-      }
-      for (int i = 0; i < 3 && name[i] != '\0'; ++i) {
-        dst[i] = static_cast<uint8_t>(name[i]);
-      }
-    }
-
-    static void FillCharacter(Referee::UICharacter& fig, const char* name,
-                              Referee::UIFigureOp op, uint8_t layer,
-                              Referee::UIColor color, uint16_t font_size,
-                              uint16_t width, uint16_t x, uint16_t y,
-                              const char* text) {
-      fig = {};
-      SetFigureName(fig.grapic_data_struct.figure_name, name);
-      fig.grapic_data_struct.operate_type = static_cast<uint32_t>(op);
-      fig.grapic_data_struct.figure_type =
-          static_cast<uint32_t>(Referee::UIFigureType::UI_TYPE_CHAR);
-      fig.grapic_data_struct.layer = layer;
-      fig.grapic_data_struct.color = static_cast<uint32_t>(color);
-      fig.grapic_data_struct.details_a = font_size;
-
-      uint16_t text_len = 0;
-      if (text != nullptr) {
-        text_len = static_cast<uint16_t>(strnlen(text, sizeof(fig.data)));
-        memcpy(fig.data, text, text_len);
-      }
-      fig.grapic_data_struct.details_b = text_len;
-      fig.grapic_data_struct.width = width;
-      fig.grapic_data_struct.start_x = x;
-      fig.grapic_data_struct.start_y = y;
-    }
-
-    void DrawCapEnergyUI() {
-      if (referee_ == nullptr) {
-        return;
-      }
-
-      const uint16_t id = referee_chassis_pack_.rs.robot_id;
-      if (id == 0) {
-        return;
-      }
-      const uint16_t client = GetClientID(id);
-
-      char buf[10];
-      if (online_) {
-        const int CAP_PERCENT =
-            std::clamp(static_cast<int>(GetCapEnergy() * 100.0f), 0, 100);
-        snprintf(buf, sizeof(buf), "SC%3d%%", CAP_PERCENT);
-      } else {
-        snprintf(buf, sizeof(buf), "SC --%%");
-      }
-
-      const Referee::UIFigureOp OP = ui_cap_initialized_
-                                         ? Referee::UIFigureOp::UI_OP_MODIFY
-                                         : Referee::UIFigureOp::UI_OP_ADD;
-      Referee::UICharacter char_fig{};
-      FillCharacter(char_fig, "SC", OP, UI_LAYER_SUPERPOWER,
-                    Referee::UIColor::UI_COLOR_GREEN, 20, UI_CHAR_WIDTH, 160,
-                    500, buf);
-      if (referee_->SendUICharacter(id, client, char_fig) == ErrorCode::OK) {
-        ui_cap_initialized_ = true;
-      }
-    }
 
   /**
    * @brief 通过CAN发送命令给超电
