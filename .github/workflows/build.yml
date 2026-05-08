@@ -22,6 +22,18 @@ jobs:
         with:
           path: Modules/${{ env.XR_MODULE_NAME }}
 
+      - name: Checkout Referee module
+        uses: actions/checkout@v4
+        with:
+          repository: QDU-Robomaster/Referee
+          path: Modules/Referee
+
+      - name: Checkout CMD module
+        uses: actions/checkout@v4
+        with:
+          repository: QDU-Robomaster/CMD
+          path: Modules/CMD
+
       - name: Create main.cpp
         run: |
           cat > main.cpp <<'EOF'
@@ -53,18 +65,6 @@ jobs:
       - name: Pull libxr to ./libxr
         run: git clone --depth=1 https://github.com/Jiu-xiao/libxr ./libxr
 
-      - name: Checkout Referee module
-        uses: actions/checkout@v4
-        with:
-          repository: QDU-Robomaster/Referee
-          path: Modules/Referee
-
-      - name: Checkout CMD module
-        uses: actions/checkout@v4
-        with:
-          repository: QDU-Robomaster/CMD
-          path: Modules/CMD
-
       - name: Setup Python & Install deps
         run: |
           python3 -m pip install --upgrade pip
@@ -86,14 +86,16 @@ jobs:
         run: |
           xrobot_init_mod
 
-      - name: Add module
+      - name: Add dependency modules
         run: |
           xrobot_add_mod BlinkLED --instance-id BlinkLED_0
-          xrobot_add_mod Referee --instance-id referee
           xrobot_add_mod CMD --instance-id cmd
+          xrobot_add_mod Referee --instance-id ref
+
       - name: Add this repo module
         run: |
-          xrobot_add_mod ${{ env.XR_MODULE_NAME }} && cat User/xrobot.yaml
+          xrobot_add_mod ${{ env.XR_MODULE_NAME }} --instance-id superpower
+          cat User/xrobot.yaml
 
       - name: Generate main again
         run: |

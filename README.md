@@ -1,132 +1,143 @@
 # SuperPower
 
-## 1. 模块作用
+`SuperPower` 是机器人主控侧的超级电容 CAN 通信模块。它负责接收超电状态帧、同步裁判系统功率上限、定时下发超电控制帧，并向 `PowerControl` 和底盘 UI 提供只读状态。
 
-`SuperPower` 是主控侧的超电通信模块，用于在机器人主控与外部超级电容控制板之间建立 CAN 双向通讯。
+本模块是 BSP 侧驱动，不是超电控制板固件。本文所有收发方向都以主控为视角。
 
-本仓库中的实现是**主控侧驱动**，不是超电板固件本体，因此通信方向按主控视角解释：
+## 职责边界
 
-- 接收超电状态帧：标准帧 ID `0x051`
-- 发送超电控制帧：标准帧 ID `0x061`
-- 使用 `Classic CAN`、标准帧、`8` 字节数据段
-- 订阅 `chassis_ref` 话题，将裁判系统功率上限写入控制帧
+- 接收超电状态帧 `0x051`，解析功率、输出能力和在线状态。
+- 订阅裁判系统 `chassis_ref` 话题，缓存底盘功率上限。
+- 在线时按最小 `5 ms` 间隔发送超电控制帧 `0x061`。
+- 对上层只暴露解码后的功率值和必要状态，不暴露旧协议状态字、错误等级、功率级开关等接口。
 
-当前实现来源于你给出的超电 README 通讯定义，但为了适配本 BSP 的模块职责，线协议格式保持一致，收发方向按主控侧重新解释。
+`PowerControl` 当前通过 `GetChassisPower()` 获取实测底盘功率，用于功率模型更新和输出限幅。
 
-## 2. 通讯协议
+## 协议约定
 
-### 2.1 接收状态帧：超电 -> 主控（ID = `0x051`）
+| 项目 | 约定 |
+|---|---|
+| CAN 类型 | Classic CAN |
+| 帧类型 | 标准帧 |
+| 数据长度 | 8 字节 |
+| 字节序 | STM32 本地小端 |
+| 状态帧 ID | `0x051`，超电 -> 主控 |
+| 控制帧 ID | `0x061`，主控 -> 超电 |
 
-代码中的状态帧结构如下：
+代码使用 `__attribute__((packed))` 描述 8 字节协议布局，并用 `memcpy` 在 CAN 数据区和协议结构体之间转换。
 
-```c
+## 状态帧
+
+状态帧由超电控制板发送给主控，CAN 标准帧 ID 为 `0x051`。
+
+```cpp
 struct __attribute__((packed)) StatusData {
-    uint8_t power_limit;
-    uint16_t chassis_power;
-    uint16_t referee_power;
-    uint16_t supercap_output_max;
-    uint8_t output_capability;
+  uint8_t power_limit;
+  uint16_t chassis_power;
+  uint16_t referee_power;
+  uint16_t superpower_output_max;
+  uint8_t output_capability;
 };
 ```
 
-字段说明：
+| 偏移 | 字段 | 类型 | 对外语义 |
+|---:|---|---|---|
+| 0 | `power_limit` | `uint8_t` | 超电侧当前功率限制原始值 |
+| 1 | `chassis_power` | `uint16_t` | 解码后为底盘实际功率，单位 W |
+| 3 | `referee_power` | `uint16_t` | 解码后为裁判系统总输出功率，单位 W |
+| 5 | `superpower_output_max` | `uint16_t` | 超电可向 A 侧输出的最大功率，单位 W |
+| 7 | `output_capability` | `uint8_t` | 输出能力原始值，范围 `0~255` |
 
-| 字段 | 字节数 | 含义 |
-|---|---:|---|
-| `power_limit` | 1 | 超电认为的当前功率限制 |
-| `chassis_power` | 2 | 底盘实际功率 |
-| `referee_power` | 2 | 裁判系统总输出功率 |
-| `supercap_output_max` | 2 | 超电当前可向 A 侧输出的最大功率 |
-| `output_capability` | 1 | 当前输出能力百分比原始值 |
+`chassis_power` 和 `referee_power` 不是直接功率值，必须先按下面公式解码：
 
-实现约定：
+```cpp
+power_w = (static_cast<float>(encoded) - 16384.0f) / 64.0f;
+```
 
-- 8 字节按 `packed` 结构体内存布局直接 `memcpy`
-- 多字节字段按 STM32 本地小端格式解释
-- `chassis_power`、`referee_power`、`supercap_output_max` 当前直接按 `uint16_t` 原始值读取，不做额外缩放
-- `GetCapEnergy()` 返回 `output_capability / 255.0f`，用于兼容现有 `PowerControl` / `Chassis` 上层逻辑
+也就是：
 
-注意：
+- 编码值 `16384` 对应 `0 W`。
+- 编码值每增加 `64`，功率增加 `1 W`。
+- 模块离线时，功率接口返回 `0`，不会把清零后的编码值解码成负功率。
 
-- `GetCapEnergy()` 的名字来自旧接口历史，当前语义是“归一化后的输出能力”，不是“电容容量”
+`superpower_output_max` 是超电计算出的最大可输出功率，按直接功率值读取，不使用零点偏移公式。
 
-### 2.2 发送控制帧：主控 -> 超电（ID = `0x061`）
+`GetCapEnergy()` 只是兼容旧上层命名，当前实际语义是输出能力比例：
 
-代码中的控制帧结构如下：
+```cpp
+output_capability / 255.0f
+```
 
-```c
+它不表示电容容量，也不表示剩余电量。
+
+## 控制帧
+
+控制帧由主控发送给超电控制板，CAN 标准帧 ID 为 `0x061`。
+
+```cpp
 struct __attribute__((packed)) CommandData {
-    uint8_t flags;
-    uint16_t referee_power_limit;
-    uint16_t reserved0;
-    uint8_t reserved1;
-    int16_t reserved2;
+  uint8_t flags;
+  uint16_t referee_power_limit;
+  uint16_t reserved0;
+  uint8_t reserved1;
+  int16_t reserved2;
 };
 ```
 
-当前实际使用字段：
+| 偏移 | 字段 | 类型 | 当前写入 |
+|---:|---|---|---|
+| 0 | `flags` | `uint8_t` | `bit0` 固定置 `1`，使能 `enableCONV` |
+| 1 | `referee_power_limit` | `uint16_t` | `chassis_ref.rs.chassis_power_limit` |
+| 3 | `reserved0` | `uint16_t` | `0` |
+| 5 | `reserved1` | `uint8_t` | `0` |
+| 6 | `reserved2` | `int16_t` | `0` |
 
-| 字段 | 字节数 | 含义 | 来源 |
-|---|---:|---|---|
-| `flags bit0` | 1 bit | `enableCONV`，是否允许变换器工作 | 当前实现固定为 `1` |
-| `referee_power_limit` | 2 | 主控下发给超电的裁判功率限制 | `chassis_ref.rs.chassis_power_limit` |
-| `reserved0` | 2 | 保留 | 固定发送 `0` |
-| `reserved1` | 1 | 保留 | 固定发送 `0` |
-| `reserved2` | 2 | 保留 | 固定发送 `0` |
+`flags` 没有使用 C 位域映射，代码通过 `ENABLE_CONV_MASK = 0x01` 显式设置 `bit0`。
 
-说明：
+## 运行机制
 
-- 当前实现未使用 C 位域结构直接映射 `enableCONV`，而是使用 `flags` 字节的 `bit0`
-- 这和你提供的协议语义一致，只是代码实现方式更直接
+1. 构造时根据 `can_bus_name` 查找 CAN 总线。
+2. 注册标准帧过滤器，只接收 ID `0x051`。
+3. 订阅 `chassis_ref` 话题，缓存裁判系统底盘功率上限。
+4. CAN 接收回调只把最新状态帧放入长度为 `1` 的无锁队列。
+5. 定时任务每 `2 ms` 执行一次 `Update()`，从队列取出状态帧并解析。
+6. 在线时按最小 `5 ms` 间隔发送 `0x061` 控制帧。
+7. 超过 `1.0 s` 没有收到新状态帧时判定离线，并清空对外状态数据。
 
-## 3. 运行行为
+状态帧 `dlc` 小于 `sizeof(StatusData)` 时会被丢弃。
 
-模块运行逻辑如下：
+## 对外接口
 
-1. 构造时在指定 CAN 总线上注册接收过滤器，仅接收标准帧 `0x051`
-2. 创建后台线程，线程周期为 `2 ms`
-3. 若 `chassis_ref` 有新数据，则更新 `referee_power_limit`
-4. 超电在线时，每 `5 ms` 发送一次 `0x061` 控制帧
-5. 超过 `1.0 s` 未收到新的 `0x051` 状态帧，则判定超电离线
-6. 离线后清空关键状态量，并将 `online` 置为 `false`
+| 接口 | 在线返回 | 离线返回 |
+|---|---|---|
+| `GetChassisPower()` | 低通滤波后的 `chassis_power`，单位 W | `0` |
+| `GetRefereePower()` | 低通滤波后的 `referee_power`，单位 W | `0` |
+| `GetSuperPowerOutputMax()` | `superpower_output_max`，单位 W | `0` |
+| `GetPowerLimit()` | `power_limit` 原始值 | `0` |
+| `GetCapEnergy()` | `output_capability / 255.0f` | `0` |
+| `GetOutputCapabilityRaw()` | `output_capability` 原始值 | `0` |
+| `IsOnline()` | `true` | `false` |
 
-说明：
+功率接口返回的是结算后的功率，不是 CAN 帧里的编码值。
 
-- 你给出的原始超电说明中，`0x051` 的发送节拍来自 `TIM2_IRQHandler`
-- 在本 BSP 中，`SuperPower` 是应用层模块，因此改为线程内软件定时发送，行为等价但不依赖中断实现
+## YAML 配置
 
-## 4. 对外接口
-
-当前 `SuperPower` 只保留以下对外接口：
-
-- `GetChassisPower()`：返回 `chassis_power`
-- `GetRefereePower()`：返回 `referee_power`
-- `GetSuperCapOutputMax()`：返回 `supercap_output_max`
-- `GetPowerLimit()`：返回 `power_limit`
-- `GetCapEnergy()`：返回 `output_capability / 255.0f`
-- `GetOutputCapabilityRaw()`：返回 `output_capability` 原始字节
-- `IsOnline()`：返回在线状态
-
-旧协议遗留接口已移除，不再保留状态字、错误等级或反馈格式相关 API。
-
-## 5. 配置示例
+最小配置如下：
 
 ```yaml
 - id: superpower
   name: SuperPower
   constructor_args:
     can_bus_name: can1
-    task_stack_depth: 800
-    thread_priority: LibXR::Thread::Priority::HIGH
-    referee: '@&ref'
 ```
 
-最小使用要求：
+配置要求：
 
-- `can_bus_name` 必须对应 `User/app_main.cpp` 中已注册的 CAN 设备
-- 若希望自动同步裁判功率上限，需要系统中已有 `Referee` 模块并持续发布 `chassis_ref`
+- `can_bus_name` 必须对应 `User/app_main.cpp` 中已经注册的 CAN 设备。
+- 系统中需要存在 `Referee` 模块，并持续发布 `chassis_ref` 话题，控制帧中的裁判功率上限才会实时更新。
+- YAML 构造参数必须和 `SuperPower` 构造函数保持一致；当前只需要 `can_bus_name`。
 
-## 6. 依赖与硬件
+## 模块声明
 
 Required Hardware:
 
@@ -136,6 +147,6 @@ Depends:
 
 - qdu-future/Referee
 
-## 7. 代码入口
+代码入口：
 
 - `Modules/SuperPower/SuperPower.hpp`
