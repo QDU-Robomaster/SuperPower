@@ -1,81 +1,134 @@
 # SuperPower
 
-## 1. 模块作用
+`SuperPower` 是主控侧的超级电容 CAN 通信模块，负责接收超电状态帧、同步裁判系统功率上限，并把控制帧发回超电控制板。
 
-SuperPower 超级电容电源模块，负责与超电板进行 CAN 双向通讯。
+这个模块只做通信和状态缓存，不负责电机限幅计算，也不负责 UI 绘制。功率控制由 `PowerControl` 使用这里提供的实测功率和在线状态完成，底盘 UI 只读取这里的只读状态。
 
-- 接收超电反馈帧（标准帧 ID `0x52`），解析状态字、功率和电容能量。
-- 下发控制命令帧（标准帧 ID `0x61`），维持 DCDC 与功率限制策略。
-- 订阅 `chassis_ref` 话题，将裁判系统功率上限与缓冲能量写入命令字段。
+## 职责
 
-## 2. 通讯协议与状态字段
+- 接收超电状态帧 `0x051`
+- 解析底盘功率、裁判系统总功率、最大输出功率和输出能力
+- 订阅 `chassis_ref` 话题，缓存裁判系统底盘功率上限
+- 收到有效状态帧后，在 CAN 接收回调里按 `5 ms` 最小间隔发送控制帧 `0x061`
+- 使用连续相同状态帧计数判断离线，不再使用定时超时检测
 
-反馈数据（`TxDataNew`，8 字节）:
+## 协议
 
-- `status_code`：状态与错误位。
-- `chassis_power`：底盘功率（编码值）。
-- `referee_power`：裁判功率（编码值）。
-- `chassis_power_limit`：底盘功率上限。
-- `cap_energy`：电容能量（`0-255`）。
+| 项目 | 约定 |
+|---|---|
+| CAN 类型 | Classic CAN |
+| 帧格式 | 标准帧 |
+| 数据长度 | 8 字节 |
+| 字节序 | STM32 本地小端 |
+| 状态帧 ID | `0x051`，超电到主控 |
+| 控制帧 ID | `0x061`，主控到超电 |
 
-功率解码公式:
+代码使用 packed 结构体描述 8 字节数据区，并通过 `memcpy` 在 CAN 数据区和结构体之间转换。
 
-- 编码：`encoded = raw * 64 + 16384`
-- 解码：`raw = (encoded - 16384) / 64.0f`
-- 量程：`-256W ~ +768W`，分辨率：`0.015625W`
+## 状态帧
 
-状态位定义（`status_code`）:
+状态帧由超电控制板发送给主控，标准帧 ID 为 `0x051`。
 
-- bit7：功率级状态（`1` 启动，`0` 未启动）。
-- bit6：反馈格式（`1` 新通讯格式，`0` 旧通讯格式）。
-- bit1:bit0：错误等级（`NO_ERROR` / `ERROR_RECOVER_AUTO` / `ERROR_RECOVER_MANUAL` / `ERROR_UNRECOVERABLE`）。
+```cpp
+struct __attribute__((packed)) StatusData {
+  uint8_t power_limit;
+  uint16_t chassis_power;
+  uint16_t referee_power;
+  uint16_t superpower_output_max;
+  uint8_t output_capability;
+};
+```
 
-命令数据（`CmdData`，8 字节）核心字段:
+| 偏移 | 字段 | 类型 | 含义 |
+|---:|---|---|---|
+| 0 | `power_limit` | `uint8_t` | 超电侧当前功率限制原始值 |
+| 1 | `chassis_power` | `uint16_t` | 底盘实际功率编码值 |
+| 3 | `referee_power` | `uint16_t` | 裁判系统总输出功率编码值 |
+| 5 | `superpower_output_max` | `uint16_t` | 超电可向 A 侧输出的最大功率 |
+| 7 | `output_capability` | `uint8_t` | 输出能力原始值，范围 `0~255` |
 
-- `enable_dcdc`：允许启动 DCDC。
-- `clear_error`：清除错误。
-- `enable_active_charging_limit` / `active_charging_limit_ratio`：主动充电限制。
-- `referee_power_limit` / `referee_energy_buffer`：由裁判系统话题更新。
+`chassis_power` 和 `referee_power` 需要按下面公式解码后再对外提供：
 
-## 3. 主要函数说明
+```cpp
+power_w = (static_cast<float>(encoded) - 16384.0f) / 64.0f;
+```
 
-1. `ThreadFunction`
-   周期处理线程，每 2ms 执行一次：拉取 `chassis_ref` 话题，更新命令参数并调用 `Update`。
+`superpower_output_max` 按直接功率值读取，不使用零点偏移公式。
 
-2. `Update`
-   处理 CAN 接收队列，计算离线时间；在线时发送命令，离线时清空关键状态。
+当前代码不做功率滤波，收到新状态帧后直接缓存解码结果。模块离线时，功率接口返回 `0`。
 
-3. `DecodePower` / `DecodePowerData`
-   完成偏移二进制功率解码和反馈帧字段解析。
+## 控制帧
 
-4. `SendCommand`
-   将 `CmdData` 按 8 字节打包，通过 CAN ID `0x61` 下发。
+控制帧由主控发送给超电控制板，标准帧 ID 为 `0x061`。
 
-5. `GetCapEnergy` / `IsOnline` / `GetErrorLevel`
-   对外提供归一化能量、在线状态、错误等级读取接口。
+```cpp
+struct __attribute__((packed)) CommandData {
+  uint8_t flags;
+  uint16_t referee_power_limit;
+  uint16_t reserved0;
+  uint8_t reserved1;
+  int16_t reserved2;
+};
+```
 
-## 4. 接入步骤
+| 偏移 | 字段 | 类型 | 当前写入 |
+|---:|---|---|---|
+| 0 | `flags` | `uint8_t` | `bit0` 固定置 `1`，使能 `enableCONV` |
+| 1 | `referee_power_limit` | `uint16_t` | `chassis_ref.rs.chassis_power_limit` |
+| 3 | `reserved0` | `uint16_t` | `0` |
+| 5 | `reserved1` | `uint8_t` | `0` |
+| 6 | `reserved2` | `int16_t` | `0` |
 
-1. 确认硬件中已注册对应 CAN 总线，并可收发标准帧 `0x52/0x61`。
-2. 在机器人 YAML 中添加 SuperPower 模块实例，设置 `can_bus_name` 和 `task_stack_depth`。
-3. 如需按裁判系统限制功率，确保 Referee 模块已运行并持续发布 `chassis_ref` 话题。
-4. 若有功率分配逻辑（如 PowerControl），将 SuperPower 实例注入对应模块。
+控制帧不单独开线程发送。收到有效状态帧后，接收回调会检查距离上一次发送是否已经超过 `5 ms`，满足条件才发送一帧。
 
-## 5. 配置示例（YAML）
+## 在线判定
+
+模块启动后，在收到第一帧有效状态帧之前认为离线。
+
+每次收到有效状态帧时，会和上一帧完整的 `StatusData` 比较：
+
+- 数据变化时，连续相同帧计数重置为 `1`
+- 数据相同时，连续相同帧计数加 `1`
+- 连续相同帧数量达到 `200` 时认为离线，并清空对外状态
+
+这里不再使用最后接收时间做超时判断。
+
+## 运行流程
+
+1. 构造时根据 `can_bus_name` 查找 CAN 总线
+2. 注册标准帧过滤器，只接收 ID `0x051`
+3. 订阅 `chassis_ref`，保存裁判系统底盘功率上限
+4. CAN 接收回调检查状态帧长度，长度不足 8 字节时丢弃
+5. 有效状态帧进入重复帧计数和协议解析
+6. 在线时按 `5 ms` 最小间隔发送控制帧
+
+## 对外接口
+
+| 接口 | 在线返回 | 离线返回 |
+|---|---|---|
+| `GetChassisPower()` | 解码后的底盘实际功率，单位 W | `0` |
+| `GetRefereePower()` | 解码后的裁判系统总输出功率，单位 W | `0` |
+| `GetSuperPowerOutputMax()` | 最大输出功率，单位 W | `0` |
+| `GetPowerLimit()` | 超电侧功率限制原始值 | `0` |
+| `GetCapEnergy()` | `output_capability / 255.0f` | `0` |
+| `IsOnline()` | `true` | `false` |
+
+`GetCapEnergy()` 是为兼容旧上层命名保留的接口，当前表示输出能力比例，不表示电容容量或剩余电量。
+
+## YAML 配置
+
+最小配置如下：
 
 ```yaml
 - id: superpower
   name: SuperPower
   constructor_args:
-      can_bus_name: can1
-      task_stack_depth: 800
-      thread_priority: LibXR::Thread::Priority::HIGH
-      referee: '@&ref'
+    can_bus_name: can1
 ```
 
-最小配置可只提供 `can_bus_name` 与 `task_stack_depth`，其余参数使用默认值。
+`can_bus_name` 必须对应 `User/app_main.cpp` 中已经注册的 CAN 设备。系统里还需要有 `Referee` 模块持续发布 `chassis_ref` 话题，否则控制帧里的 `referee_power_limit` 只会保持默认值或上一次缓存值。
 
-## 6. 依赖与硬件
+## 模块声明
 
 Required Hardware:
 
@@ -85,12 +138,6 @@ Depends:
 
 - qdu-future/Referee
 
-## 7. 在线判定与失效保护
-
-- 离线阈值为 `1.0s`：超过阈值未收到反馈即判定掉线。
-- 掉线后 `online=false`，并将关键反馈量（功率、功率上限、能量、状态字）清零。
-- 在线时恢复命令下发，模块可通过 `IsOnline` 和错误等级接口参与上层保护策略。
-
-## 8. 代码入口
+代码入口：
 
 - `Modules/SuperPower/SuperPower.hpp`
