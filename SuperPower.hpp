@@ -18,6 +18,7 @@ depends:
 #include "app_framework.hpp"
 #include "can.hpp"
 #include "libxr_def.hpp"
+#include "libxr_mem.hpp"
 #include "libxr_time.hpp"
 #include "message.hpp"
 
@@ -115,7 +116,7 @@ class SuperPower : public LibXR::Application {
     }
 
     StatusData data{};
-    std::memcpy(&data, pack.data, sizeof(StatusData));
+    LibXR::Memory::FastCopy(&data, pack.data, sizeof(StatusData));
     UpdateSameFrameCount(data);
     DecodeStatusData(data);
     status_received_ = true;
@@ -329,7 +330,7 @@ class SuperPower : public LibXR::Application {
     tx_pack.dlc = sizeof(CommandData);
     static_assert(sizeof(CommandData) == 8,
                   "CommandData must be 8 bytes for CAN");
-    std::memcpy(tx_pack.data, &command_data, sizeof(CommandData));
+    LibXR::Memory::FastCopy(tx_pack.data, &command_data, sizeof(CommandData));
     can_->AddMessage(tx_pack);
   }
 
