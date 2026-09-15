@@ -1,5 +1,16 @@
 # SuperPower
 
+## Static assembly source line
+
+This source line uses explicit C++ constructor dependencies and ordered instance
+arguments. Inspect the current primary header with `xrobot_mod_parser --path .`;
+its declarations, not old manifest/config examples, define the interface.
+Historical HardwareContainer/ApplicationManager examples below apply only to the
+older dynamic source tags. Device/protocol descriptions remain relevant.
+See the XRobot [migration guide](https://github.com/xrobot-org/XRobot/blob/dev/MIGRATION.md).
+Compilation is not hardware validation; retain version-specific board evidence.
+
+
 `SuperPower` 是主控侧的超级电容 CAN 通信模块，负责接收超电状态帧、同步裁判系统功率上限，并把控制帧发回超电控制板。
 
 这个模块只做通信和状态缓存，不负责电机限幅计算，也不负责 UI 绘制。功率控制由 `PowerControl` 使用这里提供的实测功率和在线状态完成，底盘 UI 只读取这里的只读状态。

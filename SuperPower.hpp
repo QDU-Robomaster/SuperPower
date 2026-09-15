@@ -3,19 +3,15 @@
 // clang-format off
 /* === MODULE MANIFEST V2 ===
 module_description: 超级电容电源模块
-constructor_args:
-  - can_bus_name: "can1"
-template_args: []
-required_hardware:
-  - can
 depends:
-  - qdu-future/Referee
+- id: QDU-Robomaster/Referee
+  ref: same-or-dev
 === END MANIFEST === */
 // clang-format on
 #include <cstring>
+#include <memory>
 
 #include "Referee.hpp"
-#include "app_framework.hpp"
 #include "can.hpp"
 #include "libxr_def.hpp"
 #include "libxr_mem.hpp"
@@ -33,13 +29,15 @@ depends:
  * @details 接收超电状态帧 同步裁判系统功率上限 回调里下发控制帧
  *          给上层功率控制提供在线状态和功率数据
  */
-class SuperPower : public LibXR::Application {
+class SuperPower
+{
  public:
   /**
    * @brief 超电状态帧
    * @details 对应标准帧 ID 0x51 数据长度固定为 8 字节
    */
-  struct __attribute__((packed)) StatusData {
+  struct __attribute__((packed)) StatusData
+  {
     uint8_t power_limit;            /* 超电侧当前功率限制 */
     uint16_t chassis_power;         /* 底盘实际功率编码值 */
     uint16_t referee_power;         /* 裁判系统总输出功率编码值 */
@@ -51,7 +49,8 @@ class SuperPower : public LibXR::Application {
    * @brief 超电控制帧
    * @details 对应标准帧 ID 0x61 数据长度固定为 8 字节
    */
-  struct __attribute__((packed)) CommandData {
+  struct __attribute__((packed)) CommandData
+  {
     uint8_t flags;                /* bit0 为 enableCONV 使能位 */
     uint16_t referee_power_limit; /* 下发给超电的裁判功率上限 */
     uint16_t reserved0;           /* 协议保留字段，发送 0 */
@@ -61,21 +60,14 @@ class SuperPower : public LibXR::Application {
 
   /**
    * @brief SuperPower 构造函数
-   * @param hw 硬件容器引用
-   * @param app 应用管理器引用
-   * @param can_bus_name CAN 总线名称
    * @details 构造时注册 0x51 状态帧接收过滤器 订阅 chassis_ref 话题
    */
-  SuperPower(LibXR::HardwareContainer& hw, LibXR::ApplicationManager& app,
-             const char* can_bus_name)
-      : can_(hw.template FindOrExit<LibXR::CAN>({can_bus_name})) {
-    UNUSED(app);
-
+  SuperPower(LibXR::CAN& external_can_bus_name)
+      : can_(std::addressof(external_can_bus_name))
+  {
     auto rx_callback = LibXR::CAN::Callback::Create(
-        [](bool in_isr, SuperPower* self, const LibXR::CAN::ClassicPack& pack) {
-          RxCallback(in_isr, self, pack);
-        },
-        this);
+        [](bool in_isr, SuperPower* self, const LibXR::CAN::ClassicPack& pack)
+        { RxCallback(in_isr, self, pack); }, this);
 
     can_->Register(rx_callback, LibXR::CAN::Type::STANDARD,
                    LibXR::CAN::FilterMode::ID_RANGE, FEEDBACK_ID, FEEDBACK_ID);
@@ -88,13 +80,14 @@ class SuperPower : public LibXR::Application {
    * @details 从 chassis_ref 话题获取裁判系统底盘功率上限
    *          后面发控制帧时写到 referee_power_limit 字段里
    */
-  void RegisterRefereeCallback() {
+  void RegisterRefereeCallback()
+  {
     auto topic_handle = LibXR::Topic::Find("chassis_ref", nullptr);
     ASSERT(topic_handle != nullptr);
 
     auto referee_callback = LibXR::Topic::Callback::Create(
-        [](bool in_isr, SuperPower* self,
-           const Referee::ChassisPack& chassis_pack) {
+        [](bool in_isr, SuperPower* self, const Referee::ChassisPack& chassis_pack)
+        {
           UNUSED(in_isr);
           self->referee_power_limit_ = chassis_pack.rs.chassis_power_limit;
         },
@@ -110,8 +103,10 @@ class SuperPower : public LibXR::Application {
    * @details 只处理长度不小于 StatusData 的状态帧
    *          连续相同帧达到阈值后判为离线
    */
-  void OnFeedbackFrame(const LibXR::CAN::ClassicPack& pack) {
-    if (pack.dlc < sizeof(StatusData)) {
+  void OnFeedbackFrame(const LibXR::CAN::ClassicPack& pack)
+  {
+    if (pack.dlc < sizeof(StatusData))
+    {
       return;
     }
 
@@ -121,9 +116,9 @@ class SuperPower : public LibXR::Application {
     DecodeStatusData(data);
     status_received_ = true;
 
-    if (RefreshOnlineState()) {
-      const uint32_t NOW_MS =
-          static_cast<uint32_t>(LibXR::Timebase::GetMilliseconds());
+    if (RefreshOnlineState())
+    {
+      const uint32_t NOW_MS = static_cast<uint32_t>(LibXR::Timebase::GetMilliseconds());
       SendCommandFrame(NOW_MS);
     }
   }
@@ -133,7 +128,8 @@ class SuperPower : public LibXR::Application {
    * @param data 已经拷贝出来的协议数据
    * @details 功率字段按各自协议语义处理后再缓存
    */
-  void DecodeStatusData(const StatusData& data) {
+  void DecodeStatusData(const StatusData& data)
+  {
     power_limit_ = data.power_limit;
     chassis_power_ = DecodeOffsetPower(data.chassis_power);
     referee_power_ = DecodeOffsetPower(data.referee_power);
@@ -145,8 +141,10 @@ class SuperPower : public LibXR::Application {
    * @brief 获取底盘实际功率
    * @return 解码后的底盘实际功率，单位 W，离线时返回 0
    */
-  float GetChassisPower() {
-    if (!RefreshOnlineState()) {
+  float GetChassisPower()
+  {
+    if (!RefreshOnlineState())
+    {
       return 0.0f;
     }
 
@@ -159,7 +157,8 @@ class SuperPower : public LibXR::Application {
    *          实际含义是输出能力比例 不是电容容量或剩余电量
    * @return output_capability / 255.0f 离线时返回 0
    */
-  float GetCapEnergy() {
+  float GetCapEnergy()
+  {
     RefreshOnlineState();
     return static_cast<float>(output_capability_) / 255.0f;
   }
@@ -168,8 +167,10 @@ class SuperPower : public LibXR::Application {
    * @brief 获取裁判系统总输出功率
    * @return 解码后的裁判系统总输出功率，单位 W，离线时返回 0
    */
-  float GetRefereePower() {
-    if (!RefreshOnlineState()) {
+  float GetRefereePower()
+  {
+    if (!RefreshOnlineState())
+    {
       return 0.0f;
     }
 
@@ -180,8 +181,10 @@ class SuperPower : public LibXR::Application {
    * @brief 获取超电可向 A 侧输出的最大功率
    * @return 当前最大输出功率，单位 W，离线时返回 0
    */
-  float GetSuperPowerOutputMax() {
-    if (!RefreshOnlineState()) {
+  float GetSuperPowerOutputMax()
+  {
+    if (!RefreshOnlineState())
+    {
       return 0.0f;
     }
 
@@ -192,7 +195,8 @@ class SuperPower : public LibXR::Application {
    * @brief 获取超电认为的当前功率限制
    * @return 功率限制原始值，离线时返回 0
    */
-  uint8_t GetPowerLimit() {
+  uint8_t GetPowerLimit()
+  {
     RefreshOnlineState();
     return power_limit_;
   }
@@ -206,7 +210,7 @@ class SuperPower : public LibXR::Application {
   /**
    * @brief 监控回调
    */
-  void OnMonitor() override {}
+  void OnMonitor() {}
 
  private:
   /* 控制帧 flags 的 bit0 对应协议里的 enableCONV 使能位 */
@@ -225,9 +229,9 @@ class SuperPower : public LibXR::Application {
    * @param encoded 协议里的功率编码值
    * @return 解码后的功率，单位 W
    */
-  static float DecodeOffsetPower(uint16_t encoded) {
-    return (static_cast<float>(encoded) - POWER_ENCODE_OFFSET) /
-           POWER_ENCODE_SCALE;
+  static float DecodeOffsetPower(uint16_t encoded)
+  {
+    return (static_cast<float>(encoded) - POWER_ENCODE_OFFSET) / POWER_ENCODE_SCALE;
   }
 
   /**
@@ -235,23 +239,24 @@ class SuperPower : public LibXR::Application {
    * @param power 协议里的功率值
    * @return 功率值，单位 W
    */
-  static float DecodeDirectPower(uint16_t power) {
-    return static_cast<float>(power);
-  }
+  static float DecodeDirectPower(uint16_t power) { return static_cast<float>(power); }
 
   /**
    * @brief 更新连续相同状态帧计数
    * @param data 当前状态帧数据
    */
-  void UpdateSameFrameCount(const StatusData& data) {
+  void UpdateSameFrameCount(const StatusData& data)
+  {
     if (!status_received_ ||
-        std::memcmp(&data, &last_status_data_, sizeof(StatusData)) != 0) {
+        std::memcmp(&data, &last_status_data_, sizeof(StatusData)) != 0)
+    {
       last_status_data_ = data;
       same_frame_count_ = 1;
       return;
     }
 
-    if (same_frame_count_ < SAME_FRAME_OFFLINE_COUNT) {
+    if (same_frame_count_ < SAME_FRAME_OFFLINE_COUNT)
+    {
       ++same_frame_count_;
     }
   }
@@ -261,7 +266,8 @@ class SuperPower : public LibXR::Application {
    * @details 回调里完成收包解析和控制帧下发
    */
   static void RxCallback(bool in_isr, SuperPower* self,
-                         const LibXR::CAN::ClassicPack& pack) {
+                         const LibXR::CAN::ClassicPack& pack)
+  {
     UNUSED(in_isr);
     self->OnFeedbackFrame(pack);
   }
@@ -270,7 +276,8 @@ class SuperPower : public LibXR::Application {
    * @brief 离线后清空对外状态
    * @details 只清空状态帧更新出来的数据 不清空裁判系统功率上限
    */
-  void ClearStatus() {
+  void ClearStatus()
+  {
     power_limit_ = 0;
     chassis_power_ = 0.0f;
     referee_power_ = 0.0f;
@@ -282,13 +289,16 @@ class SuperPower : public LibXR::Application {
    * @brief 按连续相同状态帧数量刷新在线状态
    * @return true 表示在线 false 表示还没收到或连续相同帧过多
    */
-  bool RefreshOnlineState() {
-    if (!status_received_) {
+  bool RefreshOnlineState()
+  {
+    if (!status_received_)
+    {
       ClearStatus();
       return false;
     }
 
-    if (same_frame_count_ >= SAME_FRAME_OFFLINE_COUNT) {
+    if (same_frame_count_ >= SAME_FRAME_OFFLINE_COUNT)
+    {
       ClearStatus();
       return false;
     }
@@ -300,13 +310,14 @@ class SuperPower : public LibXR::Application {
    * @brief 按 5ms 节流下发控制帧
    * @param now_ms 当前毫秒时间戳
    */
-  void SendCommandFrame(uint32_t now_ms) {
+  void SendCommandFrame(uint32_t now_ms)
+  {
     const uint32_t LAST_TX_MS = last_command_tx_time_ms_;
     const auto NOW_TIMESTAMP = LibXR::MillisecondTimestamp(now_ms);
     const auto LAST_TX_TIMESTAMP = LibXR::MillisecondTimestamp(LAST_TX_MS);
 
-    if ((NOW_TIMESTAMP - LAST_TX_TIMESTAMP).ToMillisecond() <
-        COMMAND_PERIOD_MS) {
+    if ((NOW_TIMESTAMP - LAST_TX_TIMESTAMP).ToMillisecond() < COMMAND_PERIOD_MS)
+    {
       return;
     }
 
@@ -319,7 +330,8 @@ class SuperPower : public LibXR::Application {
    * @details 当前固定打开 enableCONV
    *          并把最新裁判系统底盘功率上限写到 referee_power_limit 字段
    */
-  void SendCommandFrame() {
+  void SendCommandFrame()
+  {
     CommandData command_data{};
     command_data.flags = ENABLE_CONV_MASK;
     command_data.referee_power_limit = referee_power_limit_;
@@ -328,8 +340,7 @@ class SuperPower : public LibXR::Application {
     tx_pack.id = COMMAND_ID;
     tx_pack.type = LibXR::CAN::Type::STANDARD;
     tx_pack.dlc = sizeof(CommandData);
-    static_assert(sizeof(CommandData) == 8,
-                  "CommandData must be 8 bytes for CAN");
+    static_assert(sizeof(CommandData) == 8, "CommandData must be 8 bytes for CAN");
     LibXR::Memory::FastCopy(tx_pack.data, &command_data, sizeof(CommandData));
     can_->AddMessage(tx_pack);
   }
