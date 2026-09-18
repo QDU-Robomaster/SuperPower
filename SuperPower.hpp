@@ -62,8 +62,9 @@ class SuperPower
    * @brief SuperPower 构造函数
    * @details 构造时注册 0x51 状态帧接收过滤器 订阅 chassis_ref 话题
    */
-  SuperPower(LibXR::CAN& external_can_bus_name)
-      : can_(std::addressof(external_can_bus_name))
+  SuperPower(
+      LibXR::CAN& can_bus)
+      : can_(std::addressof(can_bus))
   {
     auto rx_callback = LibXR::CAN::Callback::Create(
         [](bool in_isr, SuperPower* self, const LibXR::CAN::ClassicPack& pack)
