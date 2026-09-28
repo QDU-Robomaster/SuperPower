@@ -208,11 +208,6 @@ class SuperPower
    */
   bool IsOnline() { return RefreshOnlineState(); }
 
-  /**
-   * @brief 监控回调
-   */
-  void OnMonitor() {}
-
  private:
   /* 控制帧 flags 的 bit0 对应协议里的 enableCONV 使能位 */
   static constexpr uint8_t ENABLE_CONV_MASK = 0x01;
