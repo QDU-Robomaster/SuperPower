@@ -1,19 +1,10 @@
 # SuperPower
 
-## Static assembly source line
+`SuperPower` 是主控侧的超级电容 CAN 通信模块，负责接收超电状态帧、同步裁判系统功率上限，
+并把控制帧发回超电控制板。
 
-This source line uses explicit C++ constructor dependencies and ordered instance
-arguments. Inspect the current primary header with `xrobot_mod_parser --path .`;
-its declarations, not old manifest/config examples, define the interface.
-Historical HardwareContainer/ApplicationManager examples below apply only to the
-older dynamic source tags. Device/protocol descriptions remain relevant.
-See the XRobot [migration guide](https://github.com/xrobot-org/XRobot/blob/dev/MIGRATION.md).
-Compilation is not hardware validation; retain version-specific board evidence.
-
-
-`SuperPower` 是主控侧的超级电容 CAN 通信模块，负责接收超电状态帧、同步裁判系统功率上限，并把控制帧发回超电控制板。
-
-这个模块只做通信和状态缓存，不负责电机限幅计算，也不负责 UI 绘制。功率控制由 `PowerControl` 使用这里提供的实测功率和在线状态完成，底盘 UI 只读取这里的只读状态。
+这个模块只做通信和状态缓存，不负责电机限幅计算，也不负责 UI 绘制。功率控制由
+`PowerControl` 使用这里提供的实测功率和在线状态完成，底盘 UI 只读取这里的只读状态。
 
 ## 职责
 
@@ -21,7 +12,9 @@ Compilation is not hardware validation; retain version-specific board evidence.
 - 解析底盘功率、裁判系统总功率、最大输出功率和输出能力
 - 订阅 `chassis_ref` 话题，缓存裁判系统底盘功率上限
 - 收到有效状态帧后，在 CAN 接收回调里按 `5 ms` 最小间隔发送控制帧 `0x061`
-- 使用连续相同状态帧计数判断离线，不再使用定时超时检测
+- 使用连续相同状态帧计数判断离线，不使用定时超时检测
+
+模块没有线程和定时器，所有收发都在 CAN 接收回调中完成。
 
 ## 协议
 
@@ -30,11 +23,12 @@ Compilation is not hardware validation; retain version-specific board evidence.
 | CAN 类型 | Classic CAN |
 | 帧格式 | 标准帧 |
 | 数据长度 | 8 字节 |
-| 字节序 | STM32 本地小端 |
+| 字节序 | 小端（与 STM32 本地字节序一致） |
 | 状态帧 ID | `0x051`，超电到主控 |
 | 控制帧 ID | `0x061`，主控到超电 |
 
-代码使用 packed 结构体描述 8 字节数据区，并通过 `memcpy` 在 CAN 数据区和结构体之间转换。
+代码使用 packed 结构体描述 8 字节数据区，并通过 `LibXR::Memory::FastCopy` 在 CAN 数据区和
+结构体之间拷贝。
 
 ## 状态帧
 
@@ -67,6 +61,7 @@ power_w = (static_cast<float>(encoded) - 16384.0f) / 64.0f;
 `superpower_output_max` 按直接功率值读取，不使用零点偏移公式。
 
 当前代码不做功率滤波，收到新状态帧后直接缓存解码结果。模块离线时，功率接口返回 `0`。
+长度不足 8 字节的状态帧直接丢弃。
 
 ## 控制帧
 
@@ -90,7 +85,8 @@ struct __attribute__((packed)) CommandData {
 | 5 | `reserved1` | `uint8_t` | `0` |
 | 6 | `reserved2` | `int16_t` | `0` |
 
-控制帧不单独开线程发送。收到有效状态帧后，接收回调会检查距离上一次发送是否已经超过 `5 ms`，满足条件才发送一帧。
+控制帧不单独开线程发送。收到有效状态帧且模块在线时，接收回调会检查距离上一次发送是否已经
+达到 `5 ms`，满足条件才发送一帧。
 
 ## 在线判定
 
@@ -100,18 +96,17 @@ struct __attribute__((packed)) CommandData {
 
 - 数据变化时，连续相同帧计数重置为 `1`
 - 数据相同时，连续相同帧计数加 `1`
-- 连续相同帧数量达到 `200` 时认为离线，并清空对外状态
+- 连续相同帧数量达到 `200` 时认为离线，并清空对外状态（不清空缓存的裁判功率上限）
 
-这里不再使用最后接收时间做超时判断。
+这里不使用最后接收时间做超时判断。
 
 ## 运行流程
 
-1. 构造时根据 `can_bus_name` 查找 CAN 总线
-2. 注册标准帧过滤器，只接收 ID `0x051`
-3. 订阅 `chassis_ref`，保存裁判系统底盘功率上限
-4. CAN 接收回调检查状态帧长度，长度不足 8 字节时丢弃
-5. 有效状态帧进入重复帧计数和协议解析
-6. 在线时按 `5 ms` 最小间隔发送控制帧
+1. 构造时在传入的 CAN 总线上注册标准帧过滤器，只接收 ID `0x051`
+2. 查找 `chassis_ref` 话题并注册回调，保存裁判系统底盘功率上限；话题不存在时触发 `ASSERT`
+3. CAN 接收回调检查状态帧长度，长度不足 8 字节时丢弃
+4. 有效状态帧进入重复帧计数和协议解析
+5. 在线时按 `5 ms` 最小间隔发送控制帧
 
 ## 对外接口
 
@@ -124,31 +119,58 @@ struct __attribute__((packed)) CommandData {
 | `GetCapEnergy()` | `output_capability / 255.0f` | `0` |
 | `IsOnline()` | `true` | `false` |
 
-`GetCapEnergy()` 是为兼容旧上层命名保留的接口，当前表示输出能力比例，不表示电容容量或剩余电量。
+`GetCapEnergy()` 是为兼容旧上层命名保留的接口，当前表示输出能力比例，不表示电容容量或
+剩余电量。
 
-## YAML 配置
+## 依赖
 
-最小配置如下：
+- `QDU-Robomaster/Referee`：提供 `Referee::ChassisPack` 类型，并创建本模块订阅的 `chassis_ref`
+  话题。
 
-```yaml
-- id: superpower
-  name: SuperPower
-  constructor_args:
-    can_bus_name: can1
+无外部软件包依赖。
+
+## 构造接口
+
+```cpp
+SuperPower(LibXR::CAN& can_bus);
 ```
 
-`can_bus_name` 必须对应 `User/app_main.cpp` 中已经注册的 CAN 设备。系统里还需要有 `Referee` 模块持续发布 `chassis_ref` 话题，否则控制帧里的 `referee_power_limit` 只会保持默认值或上一次缓存值。
+依赖项：
 
-## 模块声明
+- `can_bus`：`LibXR::CAN`，连接超级电容控制板的 CAN 总线。
 
-Required Hardware:
+无配置项。
 
-- can
+## 使用
 
-Depends:
+```sh
+xrobot module add QDU-Robomaster/SuperPower
+xrobot setup
+xrobot instance add QDU-Robomaster/SuperPower
+```
 
-- qdu-future/Referee
+`xrobot instance add` 在 `User/xrobot.yaml` 中写入一个实例，依赖项留空；把 `can_bus` 填为 BSP
+中用 `XR_REGISTER` 注册的 CAN 对象名：
 
-代码入口：
+```yaml
+modules:
+  - module: QDU-Robomaster/SuperPower
+    id: superpower_0
+    args:
+      - can_bus: can1
+```
 
-- `Modules/SuperPower/SuperPower.hpp`
+BSP 侧：
+
+```cpp
+XR_REGISTER(can1, LibXR::CAN);
+```
+
+构造时必须已经存在 `chassis_ref` 话题，因此 `QDU-Robomaster/Referee` 实例（使用默认的
+`referee_chassis_tp_name`）必须在 `modules:` 中排在本实例之前。该话题没有新数据时，控制帧里的
+`referee_power_limit` 保持初始值 `0` 或上一次缓存值。
+
+填好后再次运行 `xrobot setup`，生成 `User/xrobot_main.hpp`。
+
+`xrobot module show .`（在本仓库中）或 `xrobot module show Modules/QDU-Robomaster/SuperPower`
+（在 BSP 中）打印当前的构造函数。
