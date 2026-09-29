@@ -60,10 +60,13 @@ class SuperPower
 
   /**
    * @brief SuperPower 构造函数
-   * @details 构造时注册 0x51 状态帧接收过滤器 订阅 chassis_ref 话题
+   * @details 构造时注册 0x51 状态帧接收过滤器 订阅裁判系统底盘数据话题
+   * @param can_bus 连接超级电容控制板的 CAN 总线
+   * @param chassis_ref_topic_name 订阅的裁判系统底盘数据 Topic 名称
    */
   SuperPower(
-      LibXR::CAN& can_bus)
+      LibXR::CAN& can_bus,
+      const char* chassis_ref_topic_name = "chassis_ref")
       : can_(std::addressof(can_bus))
   {
     auto rx_callback = LibXR::CAN::Callback::Create(
@@ -73,17 +76,18 @@ class SuperPower
     can_->Register(rx_callback, LibXR::CAN::Type::STANDARD,
                    LibXR::CAN::FilterMode::ID_RANGE, FEEDBACK_ID, FEEDBACK_ID);
 
-    RegisterRefereeCallback();
+    RegisterRefereeCallback(chassis_ref_topic_name);
   }
 
   /**
    * @brief 订阅裁判系统底盘数据
-   * @details 从 chassis_ref 话题获取裁判系统底盘功率上限
+   * @details 从裁判系统底盘数据话题获取底盘功率上限
    *          后面发控制帧时写到 referee_power_limit 字段里
+   * @param topic_name 裁判系统底盘数据 Topic 名称
    */
-  void RegisterRefereeCallback()
+  void RegisterRefereeCallback(const char* topic_name)
   {
-    auto topic_handle = LibXR::Topic::Find("chassis_ref", nullptr);
+    auto topic_handle = LibXR::Topic::Find(topic_name, nullptr);
     ASSERT(topic_handle != nullptr);
 
     auto referee_callback = LibXR::Topic::Callback::Create(
