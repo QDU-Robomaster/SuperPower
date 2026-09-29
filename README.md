@@ -10,7 +10,7 @@
 
 - 接收超电状态帧 `0x051`
 - 解析底盘功率、裁判系统总功率、最大输出功率和输出能力
-- 订阅 `chassis_ref` 话题，缓存裁判系统底盘功率上限
+- 订阅裁判系统底盘数据话题（`chassis_ref_topic_name`，默认 `chassis_ref`），缓存底盘功率上限
 - 收到有效状态帧后，在 CAN 接收回调里按 `5 ms` 最小间隔发送控制帧 `0x061`
 - 使用连续相同状态帧计数判断离线，不使用定时超时检测
 
@@ -103,7 +103,7 @@ struct __attribute__((packed)) CommandData {
 ## 运行流程
 
 1. 构造时在传入的 CAN 总线上注册标准帧过滤器，只接收 ID `0x051`
-2. 查找 `chassis_ref` 话题并注册回调，保存裁判系统底盘功率上限；话题不存在时触发 `ASSERT`
+2. 查找 `chassis_ref_topic_name` 指定的话题并注册回调，保存裁判系统底盘功率上限；话题不存在时触发 `ASSERT`
 3. CAN 接收回调检查状态帧长度，长度不足 8 字节时丢弃
 4. 有效状态帧进入重复帧计数和协议解析
 5. 在线时按 `5 ms` 最小间隔发送控制帧
@@ -124,7 +124,7 @@ struct __attribute__((packed)) CommandData {
 
 ## 依赖
 
-- `QDU-Robomaster/Referee`：提供 `Referee::ChassisPack` 类型，并创建本模块订阅的 `chassis_ref`
+- `QDU-Robomaster/Referee`：提供 `Referee::ChassisPack` 类型，并创建本模块订阅的底盘数据
   话题。
 
 无外部软件包依赖。
@@ -132,14 +132,17 @@ struct __attribute__((packed)) CommandData {
 ## 构造接口
 
 ```cpp
-SuperPower(LibXR::CAN& can_bus);
+SuperPower(LibXR::CAN& can_bus, const char* chassis_ref_topic_name = "chassis_ref");
 ```
 
 依赖项：
 
 - `can_bus`：`LibXR::CAN`，连接超级电容控制板的 CAN 总线。
 
-无配置项。
+配置：
+
+- `chassis_ref_topic_name`：订阅的裁判系统底盘数据 Topic，默认 `"chassis_ref"`，须与 Referee 的
+  `referee_chassis_tp_name` 一致。
 
 ## 使用
 
@@ -158,6 +161,7 @@ modules:
     id: superpower_0
     args:
       - can_bus: can1
+      - chassis_ref_topic_name: '"chassis_ref"'
 ```
 
 BSP 侧：
@@ -166,8 +170,8 @@ BSP 侧：
 XR_REGISTER(can1, LibXR::CAN);
 ```
 
-构造时必须已经存在 `chassis_ref` 话题，因此 `QDU-Robomaster/Referee` 实例（使用默认的
-`referee_chassis_tp_name`）必须在 `modules:` 中排在本实例之前。该话题没有新数据时，控制帧里的
+构造时必须已经存在该话题，因此 `QDU-Robomaster/Referee` 实例（其 `referee_chassis_tp_name`
+与本实例的 `chassis_ref_topic_name` 相同）必须在 `modules:` 中排在本实例之前。该话题没有新数据时，控制帧里的
 `referee_power_limit` 保持初始值 `0` 或上一次缓存值。
 
 填好后再次运行 `xrobot setup`，生成 `User/xrobot_main.hpp`。
