@@ -84,9 +84,7 @@ class SuperPower
    * @param chassis_ref_topic_name 订阅的裁判系统底盘数据 Topic 名称。
    *                               Name of the subscribed referee chassis data Topic.
    */
-  SuperPower(
-      LibXR::CAN& can_bus,
-      const char* chassis_ref_topic_name = "chassis_ref")
+  SuperPower(LibXR::CAN& can_bus, const char* chassis_ref_topic_name = "chassis_ref")
       : can_(std::addressof(can_bus))
   {
     auto rx_callback = LibXR::CAN::Callback::Create(
