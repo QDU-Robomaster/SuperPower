@@ -2,7 +2,7 @@
 
 // clang-format off
 /* === MODULE MANIFEST V2 ===
-module_description: 超级电容电源模块
+module_description: 超级电容 CAN 通信模块：接收超电状态帧、同步裁判系统功率上限并回发控制帧 / Supercapacitor CAN communication Module that receives the capacitor status frames, synchronizes the referee power limit and sends the control frames
 depends:
 - id: QDU-Robomaster/Referee
   ref: same-or-dev
@@ -158,8 +158,7 @@ class SuperPower
 
   /**
    * @brief 获取归一化后的超电输出能力
-   * @details 这个接口为了兼容旧上层命名保留
-   *          实际含义是输出能力比例 不是电容容量或剩余电量
+   * @details 返回输出能力比例。
    * @return output_capability / 255.0f 离线时返回 0
    */
   float GetCapEnergy()
